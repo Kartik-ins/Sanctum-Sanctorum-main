@@ -3,32 +3,52 @@
 Field-level rules (trimming, lengths, ISBN checksum, email format) live here so that
 invalid input is rejected with 422 before any business logic runs.
 """
+
 from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.models import MemberTier
 
 # --- Reusable field types ---------------------------------------------------------------
 
-Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
-AuthorName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
-MemberName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+Title = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+AuthorName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+MemberName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+ISBN13_LENGTH = 13
 
 
 def normalize_isbn13(raw: str) -> str:
     """Strip hyphens/spaces and verify the ISBN-13 checksum. Raises ValueError if invalid."""
     isbn = raw.replace("-", "").replace(" ", "")
-    if len(isbn) != 13 or not isbn.isdigit():
+    if len(isbn) != ISBN13_LENGTH or not isbn.isdigit():
         raise ValueError("isbn must contain exactly 13 digits")
-    # TODO: verify the ISBN-13 check digit (see SPEC.md)
+    # ISBN-13 checksum: weights 1, 3, 1, 3... over the first 12 digits
+    # check_digit = (10 - (total % 10)) % 10
+    total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(isbn[:12]))
+    expected_check = (10 - (total % 10)) % 10
+    if int(isbn[12]) != expected_check:
+        raise ValueError("invalid ISBN-13 checksum")
     return isbn
 
 
@@ -59,17 +79,18 @@ class BookCreate(BaseModel):
 class BookUpdate(BaseModel):
     """Partial update. Only fields present in the request body are applied; ``isbn`` is ignored."""
 
-    title: Optional[Title] = None
-    author: Optional[AuthorName] = None
-    price_cents: Optional[NonNegativeInt] = None
-    stock: Optional[NonNegativeInt] = None
-    restricted: Optional[bool] = None
+    title: Title | None = None
+    author: AuthorName | None = None
+    price_cents: NonNegativeInt | None = None
+    stock: NonNegativeInt | None = None
+    restricted: bool | None = None
 
     @model_validator(mode="after")
     def reject_explicit_nulls(self) -> BookUpdate:
         for name in self.model_fields_set:
             if getattr(self, name) is None:
-                raise ValueError(f"{name} may not be null")
+                err_msg = f"{name} may not be null"
+                raise ValueError(err_msg)
         return self
 
 
@@ -86,13 +107,23 @@ class BookOut(BaseModel):
 
 
 class BookPage(BaseModel):
-    items: List[BookOut]
+    items: list[BookOut]
     total: int
     limit: int
     offset: int
 
 
 BookSort = Literal["title", "-title", "price", "-price"]
+
+
+class BookQueryParams(BaseModel):
+    q: str | None = None
+    restricted: bool | None = None
+    min_price: int | None = None
+    max_price: int | None = None
+    sort: BookSort | None = None
+    limit: int = Field(20, ge=1, le=100)
+    offset: int = Field(0, ge=0)
 
 
 # --- Members ----------------------------------------------------------------------------
@@ -142,7 +173,7 @@ class OrderItemIn(BaseModel):
 class OrderCreate(BaseModel):
     member_id: int
     # TODO: reject an empty items list and the same book_id appearing twice (both 422)
-    items: List[OrderItemIn]
+    items: list[OrderItemIn]
 
 
 class OrderItemOut(BaseModel):
@@ -160,7 +191,7 @@ class OrderOut(BaseModel):
     id: int
     member_id: int
     status: str
-    items: List[OrderItemOut]
+    items: list[OrderItemOut]
     subtotal_cents: int
     discount_percent: int
     discount_cents: int
@@ -184,7 +215,7 @@ class LoanOut(BaseModel):
     book_id: int
     borrowed_at: datetime
     due_at: datetime
-    returned_at: Optional[datetime]
+    returned_at: datetime | None
     late_fee_cents: int
     status: LoanStatus
 

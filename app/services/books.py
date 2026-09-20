@@ -1,12 +1,11 @@
 """Book catalogue operations."""
-from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Book
-from app.schemas import BookCreate, BookPage, BookSort, BookUpdate
+from app.schemas import BookCreate, BookPage, BookQueryParams, BookUpdate
 
 
 def create_book(db: Session, data: BookCreate) -> Book:
@@ -14,7 +13,12 @@ def create_book(db: Session, data: BookCreate) -> Book:
 
     Rules: the (already normalized) ISBN must be unique -> 409 otherwise.
     """
-    # TODO: reject a duplicate ISBN with 409
+    existing = db.scalar(select(Book).where(Book.isbn == data.isbn))
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail="A book with this ISBN already exists"
+        )
+
     book = Book(**data.model_dump())
     db.add(book)
     db.commit()
@@ -32,19 +36,19 @@ def get_book(db: Session, book_id: int) -> Book:
 
 def update_book(db: Session, book_id: int, data: BookUpdate) -> Book:
     """Apply a partial update. Only fields present in the request are changed; 404 if missing."""
-    raise NotImplementedError("update_book")
+    book = get_book(db, book_id)
+    updates = data.model_dump(exclude_unset=True)
+    updates.pop("isbn", None)
+    for field, value in updates.items():
+        if hasattr(book, field):
+            setattr(book, field, value)
+
+    db.commit()
+    db.refresh(book)
+    return book
 
 
-def list_books(
-    db: Session,
-    q: Optional[str] = None,
-    restricted: Optional[bool] = None,
-    min_price: Optional[int] = None,
-    max_price: Optional[int] = None,
-    sort: Optional[BookSort] = None,
-    limit: int = 20,
-    offset: int = 0,
-) -> BookPage:
+def list_books(db: Session, params: BookQueryParams) -> BookPage:
     """Search the catalogue.
 
     Rules:
@@ -55,14 +59,34 @@ def list_books(
     - ``total`` counts all matches before ``limit``/``offset`` are applied.
     """
     query = select(Book)
-    if q:
-        query = query.where(Book.title.icontains(q, autoescape=True))
-    if restricted is not None:
-        query = query.where(Book.restricted == restricted)
-    # TODO: min_price / max_price filters
+    if params.q:
+        escaped_q = params.q
+        query = query.where(
+            or_(
+                Book.title.icontains(escaped_q, autoescape=True),
+                Book.author.icontains(escaped_q, autoescape=True),
+            )
+        )
+    if params.restricted is not None:
+        query = query.where(Book.restricted == params.restricted)
+    if params.min_price is not None:
+        query = query.where(Book.price_cents >= params.min_price)
+    if params.max_price is not None:
+        query = query.where(Book.price_cents <= params.max_price)
 
-    # TODO: apply ``sort``
-    books = db.scalars(query.order_by(Book.id.asc()).limit(limit).offset(offset)).all()
-    total = len(books)
+    total_query = select(func.count()).select_from(query.subquery())
+    total = db.scalar(total_query) or 0
 
-    return BookPage(items=books, total=total, limit=limit, offset=offset)
+    if params.sort == "title":
+        query = query.order_by(Book.title.asc(), Book.id.asc())
+    elif params.sort == "-title":
+        query = query.order_by(Book.title.desc(), Book.id.asc())
+    elif params.sort == "price":
+        query = query.order_by(Book.price_cents.asc(), Book.id.asc())
+    elif params.sort == "-price":
+        query = query.order_by(Book.price_cents.desc(), Book.id.asc())
+    else:
+        query = query.order_by(Book.id.asc())
+
+    books = list(db.scalars(query.limit(params.limit).offset(params.offset)).all())
+    return BookPage(items=books, total=total, limit=params.limit, offset=params.offset)
