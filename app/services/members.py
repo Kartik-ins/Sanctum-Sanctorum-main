@@ -1,16 +1,15 @@
 """Member operations and tier helpers."""
 from datetime import datetime
-from typing import List
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Member, MemberTier, Order
+from app.models import Loan, Member, MemberTier, Order, OrderStatus
 from app.schemas import MemberCreate, MemberStats
 
 # Tiers from lowest to highest; a member's rank is their index in this list.
-TIER_ORDER: List[str] = [
+TIER_ORDER: list[str] = [
     MemberTier.APPRENTICE.value,
     MemberTier.ADEPT.value,
     MemberTier.MASTER.value,
@@ -23,14 +22,15 @@ RESTRICTED_MIN_TIER = MemberTier.MASTER.value
 
 def tier_at_least(tier: str, minimum: str) -> bool:
     """True if ``tier`` ranks at or above ``minimum``."""
-    return TIER_ORDER.index(tier) > TIER_ORDER.index(minimum)
+    return TIER_ORDER.index(tier) >= TIER_ORDER.index(minimum)
 
 
 def ensure_can_access_restricted(member: Member) -> None:
     """Raise 403 unless the member's tier may access restricted books."""
     if not tier_at_least(member.tier, RESTRICTED_MIN_TIER):
         raise HTTPException(
-            status_code=403, detail=f"Restricted books require tier '{RESTRICTED_MIN_TIER}' or higher"
+            status_code=403,
+            detail=f"Restricted books require tier '{RESTRICTED_MIN_TIER}' or higher",
         )
 
 
@@ -39,8 +39,20 @@ def create_member(db: Session, data: MemberCreate, now: datetime) -> Member:
 
     Rules: email (already stripped + lowercased) must be unique -> 409; created_at = now.
     """
-    # TODO: reject an email that is already in use with 409
-    member = Member(name=data.name, email=data.email, tier=data.tier.value, created_at=now)
+    existing = db.scalar(
+        select(Member).where(func.lower(Member.email) == data.email.lower())
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A member with this email already exists",
+        )
+    member = Member(
+        name=data.name,
+        email=data.email,
+        tier=data.tier.value,
+        created_at=now,
+    )
     db.add(member)
     db.commit()
     db.refresh(member)
@@ -55,10 +67,14 @@ def get_member(db: Session, member_id: int) -> Member:
     return member
 
 
-def list_member_orders(db: Session, member_id: int) -> List[Order]:
+def list_member_orders(db: Session, member_id: int) -> list[Order]:
     """All orders of a member ordered by id ascending; 404 if the member is missing."""
     get_member(db, member_id)
-    return list(db.scalars(select(Order).where(Order.member_id == member_id).order_by(Order.id)))
+    return list(
+        db.scalars(
+            select(Order).where(Order.member_id == member_id).order_by(Order.id)
+        )
+    )
 
 
 def get_member_stats(db: Session, member_id: int, now: datetime) -> MemberStats:
@@ -71,4 +87,56 @@ def get_member_stats(db: Session, member_id: int, now: datetime) -> MemberStats:
     - overdue_loans counts unreturned loans with now > due_at.
     - late_fees_cents sums late fees of returned loans.
     """
-    raise NotImplementedError("get_member_stats")
+    get_member(db, member_id)
+
+    paid_orders = db.execute(
+        select(
+            func.count(Order.id),
+            func.coalesce(func.sum(Order.total_cents), 0),
+        ).where(
+            Order.member_id == member_id,
+            Order.status == OrderStatus.PAID.value,
+        )
+    ).one()
+    orders_paid = paid_orders[0]
+    total_spent_cents = int(paid_orders[1])
+
+    active_loans = (
+        db.scalar(
+            select(func.count(Loan.id)).where(
+                Loan.member_id == member_id,
+                Loan.returned_at.is_(None),
+            )
+        )
+        or 0
+    )
+
+    overdue_loans = (
+        db.scalar(
+            select(func.count(Loan.id)).where(
+                Loan.member_id == member_id,
+                Loan.returned_at.is_(None),
+                Loan.due_at < now,
+            )
+        )
+        or 0
+    )
+
+    late_fees_cents = (
+        db.scalar(
+            select(func.coalesce(func.sum(Loan.late_fee_cents), 0)).where(
+                Loan.member_id == member_id,
+                Loan.returned_at.is_not(None),
+            )
+        )
+        or 0
+    )
+
+    return MemberStats(
+        member_id=member_id,
+        orders_paid=orders_paid,
+        total_spent_cents=total_spent_cents,
+        active_loans=active_loans,
+        overdue_loans=overdue_loans,
+        late_fees_cents=int(late_fees_cents),
+    )

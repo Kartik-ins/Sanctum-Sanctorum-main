@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
-from typing import List
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -47,8 +46,8 @@ class Member(Base):
     tier: Mapped[str] = mapped_column(String(20), default=MemberTier.APPRENTICE.value)
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
-    orders: Mapped[List[Order]] = relationship(back_populates="member", order_by="Order.id")
-    loans: Mapped[List[Loan]] = relationship(back_populates="member", order_by="Loan.id")
+    orders: Mapped[list[Order]] = relationship(back_populates="member", order_by="Order.id")
+    loans: Mapped[list[Loan]] = relationship(back_populates="member", order_by="Loan.id")
 
 
 class Order(Base):
@@ -65,7 +64,7 @@ class Order(Base):
 
     member: Mapped[Member] = relationship(back_populates="orders")
     # Items keep the order in which they were submitted (insertion order == id order).
-    items: Mapped[List[OrderItem]] = relationship(
+    items: Mapped[list[OrderItem]] = relationship(
         back_populates="order", order_by="OrderItem.id", cascade="all, delete-orphan"
     )
 
@@ -95,10 +94,9 @@ class Loan(Base):
     member_id: Mapped[int] = mapped_column(ForeignKey("members.id"), index=True)
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
     borrowed_at: Mapped[datetime] = mapped_column(DateTime)
-    # TODO: the loan model is incomplete. Still missing (see SPEC.md, "Loans"):
-    #   - due_at: when the book must be back (borrowed_at + 14 days)
-    #   - returned_at: nullable, set when the book is returned
-    #   - late_fee_cents: charged on return, defaults to 0
+    due_at: Mapped[datetime] = mapped_column(DateTime)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    late_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
 
     member: Mapped[Member] = relationship(back_populates="loans")
     book: Mapped[Book] = relationship()

@@ -138,9 +138,10 @@ class MemberCreate(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         """Validate and normalize the email address."""
-        if not EMAIL_PATTERN.match(value):
+        cleaned = value.strip().lower()
+        if not EMAIL_PATTERN.match(cleaned):
             raise ValueError("email is not valid")
-        return value
+        return cleaned
 
 
 class MemberOut(BaseModel):
@@ -172,8 +173,21 @@ class OrderItemIn(BaseModel):
 
 class OrderCreate(BaseModel):
     member_id: int
-    # TODO: reject an empty items list and the same book_id appearing twice (both 422)
     items: list[OrderItemIn]
+
+    @field_validator("items")
+    @classmethod
+    def validate_items(cls, items: list[OrderItemIn]) -> list[OrderItemIn]:
+        """Reject an empty items list and duplicate book IDs."""
+        if not items:
+            raise ValueError("items list cannot be empty")
+        seen_book_ids: set[int] = set()
+        for item in items:
+            if item.book_id in seen_book_ids:
+                err_msg = f"duplicate book_id: {item.book_id}"
+                raise ValueError(err_msg)
+            seen_book_ids.add(item.book_id)
+        return items
 
 
 class OrderItemOut(BaseModel):
