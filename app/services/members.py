@@ -1,4 +1,5 @@
 """Member operations and tier helpers."""
+
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -71,9 +72,7 @@ def list_member_orders(db: Session, member_id: int) -> list[Order]:
     """All orders of a member ordered by id ascending; 404 if the member is missing."""
     get_member(db, member_id)
     return list(
-        db.scalars(
-            select(Order).where(Order.member_id == member_id).order_by(Order.id)
-        )
+        db.scalars(select(Order).where(Order.member_id == member_id).order_by(Order.id))
     )
 
 

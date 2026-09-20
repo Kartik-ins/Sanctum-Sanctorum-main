@@ -1,4 +1,5 @@
 """ORM models.  Importing this module registers every table on ``Base.metadata``."""
+
 from __future__ import annotations
 
 import enum
@@ -46,8 +47,12 @@ class Member(Base):
     tier: Mapped[str] = mapped_column(String(20), default=MemberTier.APPRENTICE.value)
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
-    orders: Mapped[list[Order]] = relationship(back_populates="member", order_by="Order.id")
-    loans: Mapped[list[Loan]] = relationship(back_populates="member", order_by="Loan.id")
+    orders: Mapped[list[Order]] = relationship(
+        back_populates="member", order_by="Order.id"
+    )
+    loans: Mapped[list[Loan]] = relationship(
+        back_populates="member", order_by="Loan.id"
+    )
 
 
 class Order(Base):
