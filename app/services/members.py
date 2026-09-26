@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Loan, Member, MemberTier, Order, OrderStatus
-from app.schemas import MemberCreate, MemberStats
+from app.schemas import MemberCreate, MemberPage, MemberQueryParams, MemberStats
 
 # Tiers from lowest to highest; a member's rank is their index in this list.
 TIER_ORDER: list[str] = [
@@ -66,6 +66,17 @@ def get_member(db: Session, member_id: int) -> Member:
     if member is None:
         raise HTTPException(status_code=404, detail="Member not found")
     return member
+
+
+def list_members(db: Session, params: MemberQueryParams) -> MemberPage:
+    """Return paginated members ordered by id ascending."""
+    query = select(Member)
+    total_query = select(func.count()).select_from(query.subquery())
+    total = db.scalar(total_query) or 0
+
+    query = query.order_by(Member.id.asc()).limit(params.limit).offset(params.offset)
+    members = list(db.scalars(query).all())
+    return MemberPage(items=members, total=total, limit=params.limit, offset=params.offset)
 
 
 def list_member_orders(db: Session, member_id: int) -> list[Order]:

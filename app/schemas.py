@@ -154,6 +154,18 @@ class MemberOut(BaseModel):
     created_at: datetime
 
 
+class MemberPage(BaseModel):
+    items: list[MemberOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class MemberQueryParams(BaseModel):
+    limit: int = Field(20, ge=1, le=100)
+    offset: int = Field(0, ge=0)
+
+
 class MemberStats(BaseModel):
     member_id: int
     orders_paid: int

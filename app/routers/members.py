@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.clock import get_now
@@ -11,6 +11,8 @@ from app.schemas import (
     LoanStatus,
     MemberCreate,
     MemberOut,
+    MemberPage,
+    MemberQueryParams,
     MemberStats,
     OrderOut,
 )
@@ -26,6 +28,14 @@ router = APIRouter(prefix="/members", tags=["members"])
 @router.post("", response_model=MemberOut, status_code=201)
 def create_member(data: MemberCreate, db: DbSession, now: CurrentTime):
     return service.create_member(db, data, now)
+
+
+@router.get("", response_model=MemberPage)
+def list_members(
+    db: DbSession,
+    params: Annotated[MemberQueryParams, Query()],
+):
+    return service.list_members(db, params)
 
 
 @router.get("/{member_id}", response_model=MemberOut)
