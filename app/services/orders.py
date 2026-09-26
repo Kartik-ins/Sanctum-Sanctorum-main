@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models import Book, Member, MemberTier, Order, OrderItem, OrderStatus
@@ -56,20 +57,32 @@ def create_order(db: Session, data: OrderCreate, now: datetime) -> Order:
         if book.restricted:
             ensure_can_access_restricted(member)
 
-    for item, book in zip(data.items, books, strict=True):
-        if book.stock < item.quantity:
+    # Acquire stock atomically in sorted book_id order to prevent deadlocks
+    # and guarantee safe concurrency on low/last stock copies.
+    sorted_items_books = sorted(
+        zip(data.items, books, strict=True), key=lambda pair: pair[1].id
+    )
+    for item, book in sorted_items_books:
+        stmt = (
+            update(Book)
+            .where(Book.id == book.id, Book.stock >= item.quantity)
+            .values(stock=Book.stock - item.quantity)
+        )
+        res = db.execute(stmt)
+        if res.rowcount == 0:
+            db.rollback()
             err_msg = (
                 f"Insufficient stock for book '{book.title}' "
                 f"(requested {item.quantity}, available {book.stock})"
             )
             raise HTTPException(status_code=409, detail=err_msg)
+        db.expire(book, ["stock"])
 
     total_quantity = sum(item.quantity for item in data.items)
     subtotal_cents = 0
     order_items: list[OrderItem] = []
 
     for item, book in zip(data.items, books, strict=True):
-        book.stock -= item.quantity
         line_total = book.price_cents * item.quantity
         subtotal_cents += line_total
         order_items.append(
