@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-import app.models  # noqa: F401  (registers tables on Base.metadata)
+import app.models  # registers tables on Base.metadata
 from app.clock import get_now
 from app.db import Base, SessionLocal, engine
 from app.routers import books, loans, members, orders, reports
